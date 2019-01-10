@@ -1,0 +1,223 @@
+<script>
+    var MESSAGE_TIMEOUT= <?=messageTimeOut ?>;
+
+    var sourceFileId = null;
+    var destinationFolderId = null;
+
+    var pickerApiLoaded = false;
+    var oauthToken;
+
+    // Use the Google API Loader script to load the google.picker script.
+    function loadPicker() {
+        gapi.load('auth', {'callback': onAuthApiLoad});
+        gapi.load('picker', {'callback': onPickerApiLoad});
+    }
+
+    function onAuthApiLoad() {
+        window.gapi.auth.authorize(
+            {
+                'client_id': <?=clientId ?>,
+                'scope': <?=scope ?>,
+                'immediate': false
+            },
+        handleAuthResult);
+    }
+
+    /**
+     * Callback sul caricamento API per la gestione del picker
+     */
+    function onPickerApiLoad() {
+        pickerApiLoaded = true;
+    }
+
+    /**
+     * Gestisce risposta dalla procedura di autenticazione
+     * @param authResult
+     */
+    function handleAuthResult(authResult) {
+        if (authResult && !authResult.error) {
+            oauthToken = authResult.access_token;
+        }
+    }
+
+    /**
+     * Crea un picker per la selezione di un file
+     */
+    function createSelectionPicker() {
+        if (pickerApiLoaded && oauthToken) {
+            var view = new google.picker.DocsView()
+                .setParent('root')
+                .setIncludeFolders(true);
+            //view.setMimeTypes("image/png,image/jpeg,image/jpg");
+            //view.setMimeTypes("*");
+            var picker = new google.picker.PickerBuilder()
+            /*.enableFeature(google.picker.Feature.NAV_HIDDEN)*/
+                .disableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+                .setAppId(<?=appId ?>)
+        .setDeveloperKey(<?=developerKey ?>)
+        .setOAuthToken(oauthToken)
+                .setTitle("Seleziona i file da copiare")
+                .setLocale("IT-it")
+                .addView(view)
+                .addView(new google.picker.DocsUploadView())
+
+                .setOrigin(google.script.host.origin)
+                .setCallback(pickerCallback)
+                .build();
+            picker.setVisible(true);
+        }
+    }
+
+    /**
+     * Crea un picker per la selezione della cartella di destinazione
+     */
+    function createFolderPicker() {
+        if (pickerApiLoaded && oauthToken) {
+            // Show all files in Google Drive for selection
+            var view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+                .setIncludeFolders(true)
+                .setParent('root')
+                .setSelectFolderEnabled(true)
+                .setMimeTypes('application/vnd.google-apps.folder');
+            
+
+            var picker = new google.picker.PickerBuilder()
+                .enableFeature(google.picker.Feature.NAV_HIDDEN)
+             
+                .setAppId(<?=appId ?>)
+                .setDeveloperKey(<?=developerKey ?>)
+
+                .setTitle("Seleziona la cartella di destinazione")
+                .setLocale("IT-it")
+                .setOAuthToken(oauthToken)
+                .addView(view)
+                /*.addView(new google.picker.DocsUploadView()) */
+                .setOrigin(google.script.host.origin)
+                .setCallback(pickerDestinationCallback)
+                .build();
+            picker.setVisible(true);
+        }
+    }
+
+    /**
+     * Callback relativo alla selezione del file
+     * @param data
+     */
+    function pickerCallback(data) {
+        if (data[google.picker.Response.ACTION] == google.picker.Action.PICKED) {
+            var doc = data[google.picker.Response.DOCUMENTS][0];
+            sourceFileId=doc[google.picker.Document.ID];
+
+            $('#txtFile').html(doc[google.picker.Document.NAME]);
+            // alert('The user selected: ' + doc[google.picker.Document.NAME]+' '+doc[google.picker.Document.ID]);
+        }
+    }
+
+    /**
+     * Callback sulla selezione del folder
+     * @param data
+     */
+    function pickerDestinationCallback(data) {
+        if (data[google.picker.Response.ACTION] == google.picker.Action.PICKED) {
+            var doc = data[google.picker.Response.DOCUMENTS][0];
+            destinationFolderId=doc[google.picker.Document.ID];
+
+            $('#txtFolder').html(doc[google.picker.Document.NAME]);
+
+            //alert('Cartella di destinazione: ' + doc[google.picker.Document.NAME]);
+        }
+    }
+
+    /**
+     * Avvio lato client della copia
+     */
+    function onCopy() {
+        var errorTxt='';
+        var errorCount=0;
+
+        if (sourceFileId===null) {
+            errorCount++;
+            errorTxt+='- File da copiare non definito<br/>';
+        }
+
+        if (destinationFolderId===null) {
+            errorCount++;
+            errorTxt+='- Cartella di destinazione non definita<br/>';
+        }
+
+        if (errorCount===0) {
+            //alert('Eseguita copia');
+            $('#progressBox').removeClass("d-none").fadeIn();
+
+            $("button").attr("disabled", "disabled");
+
+            google.script.run
+                .withSuccessHandler(showMessage)
+                .withFailureHandler(showError)
+                .executeCopy(sourceFileId, destinationFolderId);
+        } else {
+            if (errorCount===1) {
+                errorTxt="Si e' verificato il seguente errore:<br/>"+errorTxt;
+            } else {
+                errorTxt="Si sono verificati i seguenti errori:<br/>"+errorTxt;
+            }
+            showError(errorTxt);
+        }
+
+    }
+
+    /**
+     * Gestisce la visualizzazione dei messaggi.
+     */
+    function showMessage() {
+        $('#progressBox').addClass("d-none");
+
+        $("button").removeAttr("disabled");
+
+        $('#messageBox')
+            .addClass("alert")
+            .addClass("alert-success")
+            .removeClass("d-none")
+            .html("File copiato con successo!").fadeIn();
+
+        var explode = function(){
+            $('#messageBox')
+                .addClass("d-none")
+                .removeClass("alert")
+                .removeClass("alert-success")
+                .html("&nbsp;").fadeOut();
+        };
+        setTimeout(explode, MESSAGE_TIMEOUT);
+
+        sourceFileId=null;
+        destinationFolderId=null;
+
+        $('#txtFile').html('-');
+        $('#txtFolder').html('-');
+    }
+
+    /**
+     * Visualizza messaggi d'errore
+     */
+    function showError(e) {
+        $('#progressBox').addClass("d-none");
+        
+        $("button").removeAttr("disabled");
+
+        $('#messageBox')
+            .addClass("alert")
+            .addClass("alert-danger")
+            .removeClass("d-none")
+            .html(e).fadeIn(MESSAGE_TIMEOUT);
+
+        var explode = function(){
+            $('#messageBox')
+                .addClass("d-none")
+                .removeClass("alert")
+                .removeClass("alert-danger")
+                .html("&nbsp;").fadeOut(MESSAGE_TIMEOUT);
+        };
+        setTimeout(explode, MESSAGE_TIMEOUT);
+    }
+</script>
+
